@@ -1,0 +1,108 @@
+name: Sync from mcp-server release
+
+# Driven by the private zopnight repo, which dispatches here on each release
+# that changed backend/mcp-server (see its publish-mcp job in deploy.yml).
+#
+# Push, not pull: this public repo cannot read the private one, so the tool
+# table arrives in the dispatch payload rather than being fetched.
+#
+# This workflow does NOT publish to the MCP registry. That happens on the
+# private side, so the registry signing key — which can overwrite anything under
+# the dev.zop namespace — never has to live in a public repository where forked
+# pull requests run workflows.
+on:
+  repository_dispatch:
+    types: [mcp-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to write into server.json (e.g. 1.3.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERSION: ${{ github.event.client_payload.version || inputs.version }}
+      TOOL_TABLE: ${{ github.event.client_payload.tool_table }}
+      SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate the payload
+        run: |
+          set -euo pipefail
+          # Semver only. The registry sorts semantically and marks an
+          # unparseable version as "latest" regardless of order, so a malformed
+          # string here would outrank every real release — permanently, since
+          # published versions cannot be edited or deleted.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '$VERSION' is not bare semver (x.y.z)" >&2
+            exit 1
+          fi
+
+      - name: Update server.json version
+        run: |
+          set -euo pipefail
+          jq --arg v "$VERSION" '.version = $v' server.json > server.tmp
+          mv server.tmp server.json
+
+      # Rewritten between markers rather than patched in place: the table's shape
+      # changes when a tool category is added, so a line-oriented edit would
+      # silently drop the new row.
+      - name: Update the tool table in README
+        if: env.TOOL_TABLE != ''
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+
+          table = os.environ["TOOL_TABLE"].strip()
+          readme = open("README.md", encoding="utf-8").read()
+
+          start = "<!-- TOOLS:START"
+          end = "<!-- TOOLS:END -->"
+          i, j = readme.find(start), readme.find(end)
+          if i == -1 or j == -1:
+              raise SystemExit("TOOLS:START/END markers missing from README.md")
+
+          # Keep the START comment line itself (it carries the do-not-edit note).
+          head_end = readme.index("-->", i) + len("-->")
+          readme = readme[:head_end] + "\n\n" + table + "\n\n" + readme[j:]
+
+          # The summary table near the top repeats the totals. Derive them from
+          # the generated table's Total row so the two can never disagree.
+          m = re.search(r"\|\s*\*\*Total\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*", table)
+          if not m:
+              raise SystemExit("could not read the Total row from the tool table")
+          total, read, write = m.groups()
+          readme, n = re.subn(
+              r"(\|\s*\*\*Tools\*\*\s*\|\s*)[^|]*(\|)",
+              rf"\g<1>{total} — {read} read, {write} write \g<2>",
+              readme,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit("could not update the Tools row in the summary table")
+
+          open("README.md", "w", encoding="utf-8").write(readme)
+          print(f"tool table updated: {total} tools ({read} read, {write} write)")
+          PY
+
+      - name: Commit
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "nothing changed"
+            exit 0
+          fi
+          git config user.name  "zopdev-bot"
+          git config user.email "noreply@zop.dev"
+          git add README.md server.json
+          git commit -m "chore: sync mcp-server ${VERSION}${SOURCE_SHA:+ (${SOURCE_SHA})}"
+          git push
