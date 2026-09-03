@@ -115,6 +115,41 @@ claude mcp add zopdev https://api.zop.dev/mcp-server -t http \
 A PAT carries **your** identity — it can do what you can do, and no more. Every call resolves
 your live role, so a role change or removal takes effect on the next request with no re-mint.
 
+### Cline
+
+Open the **MCP Servers** icon → **Remote Servers** tab, enter the URL and pick **Streamable
+HTTP**. If you prefer editing the config directly, note that Cline wants an explicit `type`, and
+spells it in camelCase:
+
+```json
+{
+  "mcpServers": {
+    "zopdev": {
+      "type": "streamableHttp",
+      "url": "https://api.zop.dev/mcp-server",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+### Continue
+
+Continue is configured in YAML rather than JSON, and the auth header goes under
+`requestOptions`:
+
+```yaml
+mcpServers:
+  - name: zopdev
+    type: streamable-http
+    url: https://api.zop.dev/mcp-server
+    requestOptions:
+      headers:
+        Authorization: Bearer YOUR_TOKEN
+```
+
+Omit `requestOptions` if you would rather sign in through OAuth.
+
 ### Other clients
 
 Any MCP client supporting a remote server and bearer-token auth works with the same URL.
@@ -170,7 +205,7 @@ Where a write tier permits them, mutating tools cover budgets, schedules, overri
 groups, start/stop, autoscaler and event-readiness lifecycle, policies, notifications,
 integrations, dashboards, provisioning, deploys and remediation workflows.
 
-<!-- TOOLS:START — generated. Do not edit by hand; CI rewrites this block on each mcp-server release. -->
+<!-- TOOLS:START — generated. Do not edit by hand; each mcp-server release opens a pull request that rewrites this block. -->
 
 | Category | Tools | Read | Write | What it covers |
 |---|---:|---:|---:|---|
@@ -253,14 +288,21 @@ OAuth 2.1 with PKCE (required), Dynamic Client Registration (RFC 7591), Protecte
 Metadata (RFC 9728), Authorization Server Metadata (RFC 8414), refresh-token rotation with reuse
 detection (RFC 9700 §4.14.2), and token revocation (RFC 7009).
 
+All of these sit at the **host root**, not under `/mcp-server` — that path only accepts
+JSON-RPC `POST` and answers a discovery `GET` with `405`:
+
 ```
-/.well-known/oauth-protected-resource        RFC 9728
-/.well-known/oauth-authorization-server      RFC 8414
-/oauth/register                              RFC 7591
-/oauth/authorize
-/oauth/token
-/oauth/revoke                                RFC 7009
+https://api.zop.dev/.well-known/oauth-protected-resource        RFC 9728
+https://api.zop.dev/.well-known/oauth-authorization-server      RFC 8414
+https://api.zop.dev/oauth/register                              RFC 7591
+https://api.zop.dev/oauth/authorize
+https://api.zop.dev/oauth/token
+https://api.zop.dev/oauth/revoke                                RFC 7009
 ```
+
+The protected-resource document is also served at the path-suffixed location some clients try
+first, `https://api.zop.dev/.well-known/oauth-protected-resource/mcp-server`, with an identical
+body. Either one works.
 
 MCP protocol revisions supported: `2024-11-05`, `2025-03-26`, `2025-06-18`, `2026-07-28`.
 
