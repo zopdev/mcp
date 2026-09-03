@@ -22,6 +22,22 @@ on:
 permissions:
   contents: write
 
+# Two dispatches landing together would both commit off the same base and the
+# second push would be rejected as non-fast-forward. Serialise instead.
+#
+# `cancel-in-progress: false` because each run carries a DIFFERENT version, so
+# cancelling one loses that sync rather than superseding it. `true` would be
+# strictly worse here.
+#
+# NOT a complete guarantee, and deliberately not claimed as one: GitHub keeps
+# only ONE pending run per concurrency group, so a burst of three or more
+# dispatches can still evict the middle one. Recovery is a manual
+# `workflow_dispatch` for the dropped version — which updates server.json but
+# not the tool table, so the table catches up on the next real release.
+concurrency:
+  group: sync-main
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -36,13 +52,48 @@ jobs:
       - name: Validate the payload
         run: |
           set -euo pipefail
-          # Semver only. The registry sorts semantically and marks an
-          # unparseable version as "latest" regardless of order, so a malformed
-          # string here would outrank every real release — permanently, since
-          # published versions cannot be edited or deleted.
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::version '$VERSION' is not bare semver (x.y.z)" >&2
+
+          # Bare semver only, and no leading zeros (semver §9 forbids them).
+          # The registry sorts semantically and marks an UNPARSEABLE version as
+          # "latest" regardless of order, so a malformed string here would
+          # outrank every real release — permanently, since published versions
+          # cannot be edited or deleted.
+          #
+          # No `>&2`: GitHub parses workflow commands from stdout only, so a
+          # redirected ::error:: renders as plain log text instead of an
+          # annotation.
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::version '${VERSION}' is not bare semver (x.y.z)"
             exit 1
+          fi
+
+          # The tool table is written verbatim into a PUBLIC README on the
+          # default branch, unreviewed. Today it is inert — the generator emits
+          # integers and hardcoded category labels, and the manifest it reads
+          # carries no free text (descriptions are deliberately excluded from
+          # it) — so nothing attacker-influenced can reach here. These checks
+          # exist for the day that stops being true, because by then the change
+          # would be in the OTHER repo and nobody would think to re-audit this
+          # one.
+          #
+          # Not a sanitiser, and not pretending to be: GitHub's Markdown
+          # renderer already strips event-handler attributes, so the realistic
+          # worst case is defacement of a git-tracked file, not script
+          # execution. This bounds the size and refuses raw HTML outright, which
+          # is cheap and unambiguous for content that should only ever be a
+          # Markdown table.
+          if [[ -n "${TOOL_TABLE}" ]]; then
+            # `wc -c`, not `${#TOOL_TABLE}`: the latter counts CHARACTERS, so a
+            # multi-byte payload could be twice the stated cap and still pass.
+            TABLE_BYTES=$(printf '%s' "${TOOL_TABLE}" | wc -c | tr -d ' ')
+            if (( TABLE_BYTES > 65536 )); then
+              echo "::error::tool_table is ${TABLE_BYTES} bytes, over the 64 KiB cap"
+              exit 1
+            fi
+            if grep -q '<' <<< "${TOOL_TABLE}"; then
+              echo "::error::tool_table contains '<' — expected a Markdown table, refusing to write raw HTML to a public README"
+              exit 1
+            fi
           fi
 
       - name: Update server.json version
@@ -54,6 +105,15 @@ jobs:
       # Rewritten between markers rather than patched in place: the table's shape
       # changes when a tool category is added, so a line-oriented edit would
       # silently drop the new row.
+      # Skipped on a manual `workflow_dispatch`, which supplies only a version:
+      # the tool table can ONLY arrive by dispatch from the private repo, so
+      # there is nothing to write and leaving it untouched is correct. The step
+      # below says so, because a silently skipped step reads like a bug.
+      - name: Note that the tool table was left unchanged
+        if: env.TOOL_TABLE == ''
+        run: |
+          echo "::notice::No tool_table in the payload (manual dispatch?) — server.json version updated, README tool table left unchanged."
+
       - name: Update the tool table in README
         if: env.TOOL_TABLE != ''
         run: |

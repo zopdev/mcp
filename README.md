@@ -1,3 +1,5 @@
+<img src="assets/logo.png" alt="ZopDev" width="72" height="72">
+
 # ZopDev MCP
 
 Cloud cost, inventory and governance on AWS, Azure and GCP — **read-only by default, with
@@ -273,6 +275,10 @@ services to your clusters.
 
 - Website — https://zop.dev
 - Documentation — https://zop.dev/developer-docs/integrations/mcp-server/overview
+- Issues with this listing or the setup instructions — https://github.com/zopdev/mcp/issues
+
+For questions about your own organisation's data, cost figures or access, contact ZopDev support
+rather than opening a public issue.
 
 This repository contains documentation and the MCP server manifest only. The server itself is
 hosted and remote; no source code is distributed here.
