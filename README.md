@@ -139,6 +139,18 @@ Then ask **"What are my ZopDev permissions?"** to see exactly what your session 
 
 ---
 
+## Example prompts
+
+Once connected, these work against your own estate. Each one is read-only — nothing below
+changes a resource:
+
+- Which non-production databases ran all weekend?
+- What is our month-to-date Azure spend, broken down by service?
+- Show me every open recommendation over $500 a month we can apply without stopping anything.
+- Which resources violate our tagging policy?
+
+---
+
 ## What it exposes
 
 Reads cover your estate end to end:
