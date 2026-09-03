@@ -1,0 +1,232 @@
+name: Sync from mcp-server release
+
+# Driven by the private zopnight repo, which dispatches here on each release
+# that changed backend/mcp-server (see its publish-mcp job in deploy.yml).
+#
+# Push, not pull: this public repo cannot read the private one, so the tool
+# table arrives in the dispatch payload rather than being fetched.
+#
+# It does NOT push to `main` either — it opens a pull request. Everything it
+# writes is generated (the version and the tool table), so the PR is a paper
+# trail rather than a design review; the point is that no automation commits
+# straight to the branch that serves this repo's public listing.
+#
+# Nothing downstream waits for that PR to merge. The registry publish on the
+# private side re-writes `.version` locally and never reads this README, so an
+# unmerged sync leaves the listing stale but cannot affect what is published.
+#
+# This workflow does NOT publish to the MCP registry. That happens on the
+# private side, so the registry signing key — which can overwrite anything under
+# the dev.zop namespace — never has to live in a public repository where forked
+# pull requests run workflows.
+on:
+  repository_dispatch:
+    types: [mcp-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to write into server.json (e.g. 1.3.0)
+        required: true
+
+permissions:
+  contents: write
+  # `gh pr create` needs this. contents: write alone can push the branch but
+  # cannot open the pull request.
+  pull-requests: write
+
+# Two dispatches landing together would race on the same sync branch, and the
+# loser's force-push would silently discard the winner's version. Serialise
+# instead.
+#
+# `cancel-in-progress: false` because each run carries a DIFFERENT version, so
+# cancelling one loses that sync rather than superseding it. `true` would be
+# strictly worse here.
+#
+# NOT a complete guarantee, and deliberately not claimed as one: GitHub keeps
+# only ONE pending run per concurrency group, so a burst of three or more
+# dispatches can still evict the middle one. Recovery is a manual
+# `workflow_dispatch` for the dropped version — which updates server.json but
+# not the tool table, so the table catches up on the next real release.
+concurrency:
+  group: sync-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERSION: ${{ github.event.client_payload.version || inputs.version }}
+      TOOL_TABLE: ${{ github.event.client_payload.tool_table }}
+      SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate the payload
+        run: |
+          set -euo pipefail
+
+          # Bare semver only, and no leading zeros (semver §9 forbids them).
+          # The registry sorts semantically and marks an UNPARSEABLE version as
+          # "latest" regardless of order, so a malformed string here would
+          # outrank every real release — permanently, since published versions
+          # cannot be edited or deleted.
+          #
+          # No `>&2`: GitHub parses workflow commands from stdout only, so a
+          # redirected ::error:: renders as plain log text instead of an
+          # annotation.
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::version '${VERSION}' is not bare semver (x.y.z)"
+            exit 1
+          fi
+
+          # The tool table is written verbatim into a PUBLIC README on the
+          # default branch, unreviewed. Today it is inert — the generator emits
+          # integers and hardcoded category labels, and the manifest it reads
+          # carries no free text (descriptions are deliberately excluded from
+          # it) — so nothing attacker-influenced can reach here. These checks
+          # exist for the day that stops being true, because by then the change
+          # would be in the OTHER repo and nobody would think to re-audit this
+          # one.
+          #
+          # Not a sanitiser, and not pretending to be: GitHub's Markdown
+          # renderer already strips event-handler attributes, so the realistic
+          # worst case is defacement of a git-tracked file, not script
+          # execution. This bounds the size and refuses raw HTML outright, which
+          # is cheap and unambiguous for content that should only ever be a
+          # Markdown table.
+          if [[ -n "${TOOL_TABLE}" ]]; then
+            # `wc -c`, not `${#TOOL_TABLE}`: the latter counts CHARACTERS, so a
+            # multi-byte payload could be twice the stated cap and still pass.
+            TABLE_BYTES=$(printf '%s' "${TOOL_TABLE}" | wc -c | tr -d ' ')
+            if (( TABLE_BYTES > 65536 )); then
+              echo "::error::tool_table is ${TABLE_BYTES} bytes, over the 64 KiB cap"
+              exit 1
+            fi
+            if grep -q '<' <<< "${TOOL_TABLE}"; then
+              echo "::error::tool_table contains '<' — expected a Markdown table, refusing to write raw HTML to a public README"
+              exit 1
+            fi
+          fi
+
+      - name: Update server.json version
+        run: |
+          set -euo pipefail
+          jq --arg v "$VERSION" '.version = $v' server.json > server.tmp
+          mv server.tmp server.json
+
+      # Rewritten between markers rather than patched in place: the table's shape
+      # changes when a tool category is added, so a line-oriented edit would
+      # silently drop the new row.
+      # Skipped on a manual `workflow_dispatch`, which supplies only a version:
+      # the tool table can ONLY arrive by dispatch from the private repo, so
+      # there is nothing to write and leaving it untouched is correct. The step
+      # below says so, because a silently skipped step reads like a bug.
+      - name: Note that the tool table was left unchanged
+        if: env.TOOL_TABLE == ''
+        run: |
+          echo "::notice::No tool_table in the payload (manual dispatch?) — server.json version updated, README tool table left unchanged."
+
+      - name: Update the tool table in README
+        if: env.TOOL_TABLE != ''
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+
+          table = os.environ["TOOL_TABLE"].strip()
+          readme = open("README.md", encoding="utf-8").read()
+
+          start = "<!-- TOOLS:START"
+          end = "<!-- TOOLS:END -->"
+          i, j = readme.find(start), readme.find(end)
+          if i == -1 or j == -1:
+              raise SystemExit("TOOLS:START/END markers missing from README.md")
+
+          # Keep the START comment line itself (it carries the do-not-edit note).
+          head_end = readme.index("-->", i) + len("-->")
+          readme = readme[:head_end] + "\n\n" + table + "\n\n" + readme[j:]
+
+          # The summary table near the top repeats the totals. Derive them from
+          # the generated table's Total row so the two can never disagree.
+          m = re.search(r"\|\s*\*\*Total\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*\*\*(\d+)\*\*", table)
+          if not m:
+              raise SystemExit("could not read the Total row from the tool table")
+          total, read, write = m.groups()
+          readme, n = re.subn(
+              r"(\|\s*\*\*Tools\*\*\s*\|\s*)[^|]*(\|)",
+              rf"\g<1>{total} — {read} read, {write} write \g<2>",
+              readme,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit("could not update the Tools row in the summary table")
+
+          open("README.md", "w", encoding="utf-8").write(readme)
+          print(f"tool table updated: {total} tools ({read} read, {write} write)")
+          PY
+
+      # ONE reusable branch, force-pushed — not a branch per version.
+      #
+      # If 1.0.1 syncs while 1.0.0's PR is still open, the force-push updates
+      # that same PR to the newest state. Per-version branches would instead
+      # queue stale PRs that conflict with each other, and whoever merged them
+      # out of order would write an older version into server.json.
+      #
+      # Force-push is safe here precisely because the branch holds nothing a
+      # human authored: every byte is regenerated from the payload each run.
+      - name: Open or update the sync pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet; then
+            echo "::notice::nothing changed — no pull request needed"
+            exit 0
+          fi
+
+          BRANCH="chore/mcp-sync"
+
+          git config user.name  "zopdev-bot"
+          git config user.email "noreply@zop.dev"
+          # -B, not -b: idempotent. A default actions/checkout does not create
+          # this branch locally, so -b works today — but -B also survives
+          # someone later adding fetch-depth: 0, and resetting to the current
+          # HEAD is exactly what we want since the content is regenerated.
+          git checkout -B "$BRANCH"
+          git add README.md server.json
+          git commit -m "chore: sync mcp-server ${VERSION}${SOURCE_SHA:+ (${SOURCE_SHA})}"
+          git push -f origin "$BRANCH"
+
+          # Body via heredoc + --body-file: a multi-line --body argument would
+          # have to be one shell string, and the backticks in it are a
+          # command-substitution hazard. Backticks are escaped below for the
+          # same reason.
+          cat > /tmp/pr-body.md <<EOF
+          Generated by the mcp-server release pipeline in \`zopdev/zopnight\` — the
+          \`server.json\` version and the README tool table, nothing else.
+
+          Every byte on this branch is regenerated from the release payload, so
+          review the numbers rather than the diff shape.
+
+          **Merging is not urgent.** The registry publish overrides \`.version\` on
+          its own side and never reads this README, so leaving this open makes the
+          public listing stale but cannot affect what has been published.
+
+          Version: \`${VERSION}\`${SOURCE_SHA:+ · source: \`${SOURCE_SHA}\`}
+          EOF
+
+          # Create only if none is open — a force-push already updated any
+          # existing one. Checked via the API rather than letting `gh pr create`
+          # fail, so a real failure stays distinguishable from "already there".
+          OPEN=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
+          if [[ "$OPEN" == "0" ]]; then
+            gh pr create --base main --head "$BRANCH" \
+              --title "chore: sync mcp-server ${VERSION}" \
+              --body-file /tmp/pr-body.md
+            echo "::notice::opened a sync pull request for ${VERSION}"
+          else
+            echo "::notice::updated the existing sync pull request to ${VERSION}"
+          fi
