@@ -5,6 +5,13 @@
   "description": "Cloud cost, inventory and governance on AWS/Azure/GCP. Read-only by default, optional scoped writes",
   "version": "1.0.0",
   "websiteUrl": "https://zop.dev",
+  "icons": [
+    {
+      "src": "https://zop.dev/favicon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"]
+    }
+  ],
   "repository": {
     "url": "https://github.com/zopdev/mcp",
     "source": "github"

@@ -28,6 +28,8 @@ One server covers both ZopDev products:
 | **Auth** | OAuth 2.1 (recommended) or a personal access token |
 | **Tools** | 289 — 165 read, 124 write |
 | **Default access** | Read-only. Writes are opt-in per organisation and scoped per token |
+| **Privacy policy** | https://zop.dev/legal/privacy-policy |
+| **Terms of service** | https://zop.dev/legal/website-terms-of-service |
 
 - **Learn more** — https://zop.dev/learn/mcp-server
 - **Protocol reference** — https://zop.dev/developer-docs/integrations/mcp-server/overview
