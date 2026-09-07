@@ -205,7 +205,7 @@ Where a write tier permits them, mutating tools cover budgets, schedules, overri
 groups, start/stop, autoscaler and event-readiness lifecycle, policies, notifications,
 integrations, dashboards, provisioning, deploys and remediation workflows.
 
-<!-- TOOLS:START — generated. Do not edit by hand; each mcp-server release opens a pull request that rewrites this block. -->
+<!-- TOOLS:START — generated. Do not edit by hand; CI rewrites this block on each mcp-server release. -->
 
 | Category | Tools | Read | Write | What it covers |
 |---|---:|---:|---:|---|
