@@ -3,7 +3,7 @@
   "name": "dev.zop/zopdev-mcp",
   "title": "ZopDev MCP",
   "description": "Cloud cost, inventory and governance on AWS/Azure/GCP. Read-only by default, optional scoped writes",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "websiteUrl": "https://zop.dev",
   "icons": [
     {
