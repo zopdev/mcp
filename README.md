@@ -26,7 +26,7 @@ One server covers both ZopDev products:
 | **Endpoint** | `https://api.zop.dev/mcp-server` |
 | **Transport** | `streamable-http` (JSON-RPC 2.0 over HTTP POST) |
 | **Auth** | OAuth 2.1 (recommended) or a personal access token |
-| **Tools** | 352 — 193 read, 159 write |
+| **Tools** | 353 — 193 read, 160 write |
 | **Default access** | Read-only. Writes are opt-in per organisation and scoped per token |
 | **Privacy policy** | https://zop.dev/legal/privacy-policy |
 | **Terms of service** | https://zop.dev/legal/website-terms-of-service |
@@ -214,10 +214,10 @@ integrations, dashboards, provisioning, deploys and remediation workflows.
 | **Cost** | 59 | 48 | 11 | cost and savings summaries, breakdowns, trends, budgets, billing sync |
 | **Optimize** | 22 | 10 | 12 | recommendations and their savings, schedules, overrides, resource groups |
 | **Operate** | 55 | 24 | 31 | start/stop history, actions, scheduler events, provisioning jobs |
-| **Govern** | 106 | 41 | 65 | tagging policies, smart tags, roles, users, audit logs, notifications |
+| **Govern** | 107 | 41 | 66 | tagging policies, smart tags, roles, users, audit logs, notifications |
 | **Ship** | 67 | 31 | 36 | projects, environments, Services, infrastructure, deploy status |
 | **Diagnose** | 15 | 15 | 0 | metrics, error detail, state behind a failed deploy or job |
-| **Total** | **352** | **193** | **159** | |
+| **Total** | **353** | **193** | **160** | |
 
 <!-- TOOLS:END -->
 
